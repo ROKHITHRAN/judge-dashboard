@@ -144,3 +144,13 @@ export interface Officer {
   role: "POLICE";
   createdAt: number;
 }
+
+export const EvidenceType = [
+  "Document",
+  "Image",
+  "Video",
+  "Audio",
+  "Weapon",
+  "ForensicReport",
+  "Other",
+];

@@ -1,26 +1,18 @@
 import { useState, useEffect } from "react";
-import {
-  Plus,
-  Search,
-  Eye,
-  Edit,
-  Trash2,
-  UserPlus,
-  ArrowLeft,
-} from "lucide-react";
+import { Search, Eye, ArrowLeft } from "lucide-react";
 import { caseService } from "../services/case.service";
 import { evidenceService } from "../services/evidence.service";
 import { logService } from "../services/log.service";
 import {
   Case,
-  CreateCaseRequest,
-  UpdateCaseRequest,
   Evidence,
   AccessLog,
   ApiError,
+  EvidenceHistory,
+  EvidenceType,
 } from "../types";
+import { fileService } from "../services/file.service";
 import { Modal } from "./Modal";
-import { useAuth } from "../context/AuthContext";
 
 export const Cases = () => {
   const [cases, setCases] = useState<Case[]>([]);
@@ -33,24 +25,11 @@ export const Cases = () => {
   const [activeTab, setActiveTab] = useState<"overview" | "evidence" | "logs">(
     "overview",
   );
-  const [isCreating, setIsCreating] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [evidenceHistory, setEvidenceHistory] = useState<EvidenceHistory[]>([]);
 
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-
-  const [newCase, setNewCase] = useState<CreateCaseRequest>({
-    title: "",
-    description: "",
-    priority: "MEDIUM",
-    caseType: 1,
-    location: "Chennai",
-    status: "OPEN",
-  });
-
-  const [editCase, setEditCase] = useState<UpdateCaseRequest>({});
-  const [assignOfficerId, setAssignOfficerId] = useState("");
-  const { user } = useAuth();
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isViewing, setIsViewing] = useState(false);
 
   useEffect(() => {
     loadCases();
@@ -59,13 +38,13 @@ export const Cases = () => {
   const loadCases = async () => {
     try {
       setIsLoading(true);
-      const data = await caseService.getAllCases();
 
-      setCases(data);
+      const response = await caseService.getAllCases();
+      setCases(response);
       setError("");
     } catch (err) {
       const error = err as ApiError;
-      setError(error.message);
+      setError(error.message || "Failed to load cases");
     } finally {
       setIsLoading(false);
     }
@@ -74,121 +53,78 @@ export const Cases = () => {
   const loadCaseDetails = async (caseItem: Case) => {
     setSelectedCase(caseItem);
     setActiveTab("overview");
+
     try {
       const [evidence, logs] = await Promise.all([
         evidenceService.getEvidenceByCase(caseItem.id),
         logService.getLogsByCase(caseItem.id),
       ]);
-      console.log(logs);
 
       setCaseEvidence(evidence);
-      setCaseLogs(logs);
+      setCaseLogs(Array.isArray(logs) ? logs : []);
     } catch (err) {
       const error = err as ApiError;
       setError(error.message);
     }
   };
 
-  // const handleCreateCase = async () => {
-  //   try {
-  //     await caseService.createCase(newCase);
-  //     setIsCreateModalOpen(false);
-  //     setNewCase({ title: "", description: "", priority: "MEDIUM" });
-  //     loadCases();
-  //   } catch (err) {
-  //     const error = err as ApiError;
-  //     setError(error.message);
-  //   }
-  // };
-
-  const handleCreateCase = async () => {
-    if (isCreating) return; // prevent double click
-
+  const handleDownloadEvidenceFile = async (
+    ipfsHash: string,
+    fallbackName = "evidence",
+  ) => {
     try {
-      setIsCreating(true);
+      if (isDownloading) return;
 
-      const payload = {
-        ...newCase,
-        policeName: user!.userName,
-        detailsHash:
-          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      };
+      setIsDownloading(true);
 
-      await caseService.createCase(payload);
+      const response = await fileService.downloadFile(ipfsHash);
 
-      // ✅ success
-      setIsCreateModalOpen(false);
-      setNewCase({
-        title: "",
-        description: "",
-        priority: "MEDIUM",
-        caseType: 1,
-        location: "Chennai",
-        status: "OPEN",
-      });
+      const contentType =
+        response.headers["content-type"] || "application/octet-stream";
 
-      loadCases();
+      const blob = new Blob([response.data], { type: contentType });
+
+      // 🔥 Determine extension automatically
+      const extension = contentType.split("/")[1] || "bin";
+
+      const fileName = `${fallbackName}.${extension}`;
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = fileName;
+
+      document.body.appendChild(link);
+      link.click();
+
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const error = err as ApiError;
+      setError(error.message || "File download failed");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const loadEvidenceHistory = async (evidenceId: string) => {
+    if (!selectedCase || isViewing) return;
+    try {
+      setIsViewing(true);
+      const history = await evidenceService.getEvidenceHistory(
+        selectedCase.id,
+        evidenceId,
+      );
+      setEvidenceHistory(history);
+      setIsHistoryModalOpen(true);
     } catch (err) {
       const error = err as ApiError;
       setError(error.message);
     } finally {
-      setIsCreating(false);
+      setIsViewing(false);
     }
   };
-
-  const handleUpdateCase = async () => {
-    if (!selectedCase) return;
-    try {
-      await caseService.updateCase(selectedCase.id, editCase);
-      setIsEditModalOpen(false);
-      setEditCase({});
-      loadCases();
-      if (selectedCase) {
-        const updated = await caseService.getCaseById(selectedCase.id);
-        setSelectedCase(updated);
-      }
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error.message);
-    }
-  };
-
-  const handleDeleteCase = async (caseId: string) => {
-    if (!confirm("Are you sure you want to delete this case?")) return;
-    try {
-      await caseService.deleteCase(caseId);
-      loadCases();
-      setSelectedCase(null);
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error.message);
-    }
-  };
-
-  const handleAssignPolice = async () => {
-    if (!selectedCase) return;
-    try {
-      await caseService.assignPolice(selectedCase.id, {
-        officerId: assignOfficerId,
-      });
-      setIsAssignModalOpen(false);
-      setAssignOfficerId("");
-      loadCases();
-      const updated = await caseService.getCaseById(selectedCase.id);
-      setSelectedCase(updated);
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error.message);
-    }
-  };
-
-  const filteredCases =
-    cases.length > 0
-      ? cases.filter((c) =>
-          c.title.toLowerCase().includes(searchTerm.toLowerCase()),
-        )
-      : [];
-
   const getPriorityColor = (priority: string) => {
     const colors = {
       LOW: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
@@ -213,6 +149,13 @@ export const Cases = () => {
     return colors[status as keyof typeof colors] || colors.OPEN;
   };
 
+  const filteredCases =
+    cases.length > 0
+      ? cases.filter((c) =>
+          c.title.toLowerCase().includes(searchTerm.toLowerCase()),
+        )
+      : [];
+
   if (selectedCase) {
     return (
       <div className="space-y-6">
@@ -224,39 +167,6 @@ export const Cases = () => {
             <ArrowLeft size={20} />
             Back to Cases
           </button>
-          {selectedCase.assignedPoliceUids.includes(user!.uid) && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setEditCase({
-                    title: selectedCase.title,
-                    description: selectedCase.description,
-                    status: selectedCase.status,
-                    priority: selectedCase.priority,
-                  });
-                  setIsEditModalOpen(true);
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                <Edit size={16} />
-                Edit
-              </button>
-              <button
-                onClick={() => setIsAssignModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                <UserPlus size={16} />
-                Assign
-              </button>
-              <button
-                onClick={() => handleDeleteCase(selectedCase.id)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
-                <Trash2 size={16} />
-                Delete
-              </button>
-            </div>
-          )}
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
@@ -358,7 +268,7 @@ export const Cases = () => {
                       <div className="flex justify-between items-start">
                         <div>
                           <h4 className="font-semibold text-gray-900 dark:text-white">
-                            {evidence.type}
+                            {EvidenceType[Number(evidence.eType)]}
                           </h4>
                           <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
                             {evidence.description}
@@ -371,14 +281,171 @@ export const Cases = () => {
                             Found At: {evidence.locationFound}
                           </p>
                         </div>
-                        {evidence.ipfsHash && (
-                          <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 px-2 py-1 rounded">
-                            File Attached
-                          </span>
-                        )}
+                        <div className="flex gap-2">
+                          <div className="flex flex-col gap-2 w-28">
+                            <button
+                              onClick={() => loadEvidenceHistory(evidence.id)}
+                              disabled={isViewing}
+                              className={`w-full flex items-center justify-center gap-2 text-xs py-1 rounded transition-all duration-200
+                              ${
+                                isViewing
+                                  ? "bg-orange-200 dark:bg-orange-900/50 text-orange-500 cursor-not-allowed"
+                                  : "bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-red-900/50"
+                              }
+                            `}
+                            >
+                              {isViewing ? (
+                                <>
+                                  <svg
+                                    className="animate-spin h-3 w-3"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v8z"
+                                    />
+                                  </svg>
+                                  Loading...
+                                </>
+                              ) : (
+                                "View History"
+                              )}{" "}
+                            </button>
+                            {evidence.ipfsHash && (
+                              <button
+                                onClick={() =>
+                                  handleDownloadEvidenceFile(evidence.ipfsHash!)
+                                }
+                                className={`w-full flex items-center justify-center gap-2 text-xs py-1 rounded transition-all duration-200
+                              ${
+                                isDownloading
+                                  ? "bg-green-200 dark:bg-green-900/50 text-green-500 cursor-not-allowed"
+                                  : "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50"
+                              }
+                            `}
+                              >
+                                {isDownloading ? (
+                                  <>
+                                    <svg
+                                      className="animate-spin h-3 w-3"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                    >
+                                      <circle
+                                        className="opacity-25"
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        stroke="currentColor"
+                                        strokeWidth="4"
+                                      />
+                                      <path
+                                        className="opacity-75"
+                                        fill="currentColor"
+                                        d="M4 12a8 8 0 018-8v8z"
+                                      />
+                                    </svg>
+                                    Loading...
+                                  </>
+                                ) : (
+                                  "Download"
+                                )}{" "}
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
+                  {/* View History */}
+                  <Modal
+                    isOpen={isHistoryModalOpen}
+                    onClose={() => setIsHistoryModalOpen(false)}
+                    title="Evidence History"
+                    size="lg"
+                  >
+                    <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                      {evidenceHistory.length === 0 ? (
+                        <p className="text-gray-600 dark:text-gray-400 text-center py-8">
+                          No history found
+                        </p>
+                      ) : (
+                        evidenceHistory.map((history) => (
+                          <div
+                            key={history.id}
+                            className="relative rounded-xl border border-border bg-card shadow-sm hover:shadow-md transition-all duration-300 p-5"
+                          >
+                            {/* Timeline Dot */}
+                            <div className="absolute -left-0 top-6 w-3 h-3 bg-blue-500 rounded-full shadow" />
+
+                            {/* Header */}
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <p className="text-sm font-semibold text-primary dark:text-white">
+                                  Evidence Version {history.version}
+                                </p>
+                                <p className="text-sm font-semibold text-primary dark:text-white">
+                                  Action : {Actions[history.action]}
+                                </p>
+                                <p className="text-xs text-muted-foreground dark:text-white">
+                                  Performed by {history.performedByName}
+                                </p>
+                              </div>
+
+                              <span className="text-xs bg-muted px-3 py-1 rounded-full text-muted-foreground dark:text-white">
+                                {new Date(
+                                  Number(history.timestamp) * 1000,
+                                ).toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* Divider */}
+                            <div className="border-t border-border my-3" />
+
+                            {/* Content Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                              <div className="space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground dark:text-white">
+                                  Description
+                                </p>
+                                <p className="text-foreground leading-relaxed dark:text-white">
+                                  {history.description}
+                                </p>
+                              </div>
+
+                              <div className="space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground dark:text-white">
+                                  Evidence Type
+                                </p>
+                                <span className="inline-block text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-md">
+                                  {history.eType}
+                                </span>
+                              </div>
+
+                              <div className="space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground dark:text-white">
+                                  Location Found
+                                </p>
+                                <p className="text-foreground dark:text-white">
+                                  {history.locationFound}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </Modal>
                 </div>
               )}
             </div>
@@ -391,7 +458,7 @@ export const Cases = () => {
                   No logs found
                 </p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
                   {caseLogs.map((log) => (
                     <div
                       key={log.id}
@@ -403,7 +470,7 @@ export const Cases = () => {
                             {log.action}
                           </p>
                           <p className="text-sm text-gray-600 dark:text-gray-400">
-                            by {log.performedBy} ({log.performedByRole})
+                            by {log.performedByName} ({log.performedByRole})
                           </p>
                         </div>
                         <span className="text-xs text-gray-500 dark:text-gray-500">
@@ -417,144 +484,6 @@ export const Cases = () => {
             </div>
           )}
         </div>
-
-        <Modal
-          isOpen={isEditModalOpen}
-          onClose={() => setIsEditModalOpen(false)}
-          title="Edit Case"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Title
-              </label>
-              <input
-                type="text"
-                value={editCase.title || ""}
-                onChange={(e) =>
-                  setEditCase({ ...editCase, title: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Description
-              </label>
-              <textarea
-                value={editCase.description || ""}
-                onChange={(e) =>
-                  setEditCase({ ...editCase, description: e.target.value })
-                }
-                rows={4}
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Status
-              </label>
-              <select
-                value={editCase.status || ""}
-                onChange={(e) =>
-                  setEditCase({
-                    ...editCase,
-                    status: e.target.value as Case["status"],
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="OPEN">Open</option>
-                <option value="IN_PROGRESS">In Progress</option>
-                <option value="CLOSED">Closed</option>
-                <option value="ARCHIVED">Archived</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Case Type
-              </label>
-              <input
-                type="number"
-                value={newCase.caseType}
-                onChange={(e) =>
-                  setNewCase({ ...newCase, caseType: Number(e.target.value) })
-                }
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Priority
-              </label>
-              <select
-                value={editCase.priority || ""}
-                onChange={(e) =>
-                  setEditCase({
-                    ...editCase,
-                    priority: e.target.value as Case["priority"],
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="LOW">Low</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HIGH">High</option>
-                <option value="CRITICAL">Critical</option>
-              </select>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setIsEditModalOpen(false)}
-                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUpdateCase}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Update Case
-              </button>
-            </div>
-          </div>
-        </Modal>
-
-        <Modal
-          isOpen={isAssignModalOpen}
-          onClose={() => setIsAssignModalOpen(false)}
-          title="Assign Police Officer"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Officer ID
-              </label>
-              <input
-                type="text"
-                value={assignOfficerId}
-                onChange={(e) => setAssignOfficerId(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                placeholder="Enter officer ID"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setIsAssignModalOpen(false)}
-                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAssignPolice}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                Assign Officer
-              </button>
-            </div>
-          </div>
-        </Modal>
       </div>
     );
   }
@@ -563,15 +492,8 @@ export const Cases = () => {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-          Cases
+          All Cases
         </h1>
-        {/* <button
-          onClick={() => setIsCreateModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={20} />
-          Create Case
-        </button> */}
       </div>
 
       {error && (
@@ -645,137 +567,7 @@ export const Cases = () => {
           ))}
         </div>
       )}
-
-      <Modal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        title="Create New Case"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Title
-            </label>
-            <input
-              type="text"
-              value={newCase.title}
-              onChange={(e) =>
-                setNewCase({ ...newCase, title: e.target.value })
-              }
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              placeholder="Enter case title"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Description
-            </label>
-            <textarea
-              value={newCase.description}
-              onChange={(e) =>
-                setNewCase({ ...newCase, description: e.target.value })
-              }
-              rows={4}
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              placeholder="Enter case description"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Priority
-            </label>
-            <select
-              value={newCase.priority}
-              onChange={(e) =>
-                setNewCase({
-                  ...newCase,
-                  priority: e.target.value as Case["priority"],
-                })
-              }
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            >
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-              <option value="CRITICAL">Critical</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Case Type
-            </label>
-            <input
-              type="number"
-              value={newCase.caseType}
-              onChange={(e) =>
-                setNewCase({ ...newCase, caseType: Number(e.target.value) })
-              }
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Location
-            </label>
-            <input
-              type="text"
-              value={newCase.location}
-              onChange={(e) =>
-                setNewCase({ ...newCase, location: e.target.value })
-              }
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              placeholder="Enter location"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => setIsCreateModalOpen(false)}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateCase}
-              disabled={isCreating}
-              className={`px-4 py-2 rounded-lg text-white flex items-center justify-center gap-2
-                ${
-                  isCreating
-                    ? "bg-blue-400 cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-700"
-                }
-              `}
-            >
-              {isCreating ? (
-                <>
-                  <svg
-                    className="animate-spin h-4 w-4 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                    />
-                  </svg>
-                  Creating...
-                </>
-              ) : (
-                "Create Case"
-              )}
-            </button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 };
+const Actions = ["READ", "CREATE", "UPDATE", "DELETE"];

@@ -4,11 +4,9 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
+
 import { Cases } from "./components/Cases";
-import { Evidence } from "./components/Evidence";
-import { Logs } from "./components/Logs";
-import { Files } from "./components/Files";
-import { MyCases } from "./components/MyCases";
+import CaseAccessRequest from "./components/CaseAccessRequest";
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -39,16 +37,10 @@ function AppContent() {
     switch (currentView) {
       case "dashboard":
         return <Dashboard />;
-      case "my_cases":
-        return <MyCases />;
       case "cases":
         return <Cases />;
-      case "evidence":
-        return <Evidence />;
-      case "logs":
-        return <Logs />;
-      case "files":
-        return <Files />;
+      case "requests":
+        return <CaseAccessRequest />;
       default:
         return <Dashboard />;
     }

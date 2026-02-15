@@ -9,6 +9,7 @@ import {
   Sun,
   Menu,
   X,
+  TicketCheck,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
@@ -26,11 +27,8 @@ export const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
 
   const menuItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "my_cases", label: "My Cases", icon: FolderOpen },
     { id: "cases", label: "Cases", icon: FolderOpen },
-    { id: "evidence", label: "Evidence", icon: FileText },
-    { id: "logs", label: "Logs", icon: ScrollText },
-    { id: "files", label: "Files", icon: Upload },
+    { id: "requests", label: "Requests", icon: TicketCheck },
   ];
 
   const toggleMobile = () => setIsMobileOpen(!isMobileOpen);
@@ -52,7 +50,7 @@ export const Sidebar = ({ currentView, onNavigate }: SidebarProps) => {
         <div className="flex flex-col h-full">
           <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              Police Portal
+              Court Portal
             </h1>
           </div>
 
